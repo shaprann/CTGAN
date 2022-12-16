@@ -35,6 +35,7 @@ class Sen2_MTC(Dataset):
         self.augment_rotation_param = np.random.randint(0, 4, len(self.filepair))
         self.augment_flip_param = np.random.randint(0, 3, len(self.filepair))
         self.index = 0
+
     def __getitem__(self, index):
         cloud_image_path0, cloud_image_path1, cloud_image_path2 = self.filepair[index][0], self.filepair[index][1], self.filepair[index][2]
         cloudless_image_path = self.filepair[index][3]
@@ -72,5 +73,5 @@ class Sen2_MTC(Dataset):
         if std.ndim == 1:
             std = std.view(-1, 1, 1)
         image.sub_(mean).div_(std)
-        
+
         return image

@@ -29,16 +29,16 @@ def test_and_visualization(opt, model_GEN, test_loader, criterion):
 
             loss = criterion(fake_B, real_B)
             
-            for batch in range(opt.batch_size):
-                image_name = image_names[batch]
-                output, label = fake_B[batch], real_B[batch]
-                input_1, input_2, input_3 = real_A[0][batch], real_A[1][batch], real_A[2][batch]
+            for image_num in range(opt.batch_size):
+                image_name = image_names[image_num]
+                output, label = fake_B[image_num], real_B[image_num]
+                input_1, input_2, input_3 = real_A[0][image_num], real_A[1][image_num], real_A[2][image_num]
                 input_1, input_2, input_3 = get_rgb(input_1), get_rgb(input_2), get_rgb(input_3)
 
                 for idx, real_img in enumerate([input_1, input_2, input_3]):
                     save_image(real_img, save_path, image_name + f'_real_A{idx + 1}.png')
 
-                save_heatmap([cloud_mask[0][batch], cloud_mask[1][batch], cloud_mask[2][batch]], save_path, image_name)
+                save_heatmap([cloud_mask[0][image_num], cloud_mask[1][image_num], cloud_mask[2][image_num]], save_path, image_name)
 
                 output_rgb, label_rgb = get_rgb(output), get_rgb(label)
                 save_image(output_rgb, save_path, image_name + '_fake_B.png')
