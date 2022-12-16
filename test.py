@@ -1,6 +1,7 @@
 import numpy as np
 from model.CTGAN import CTGAN_Generator
 from dataset import Sen2_MTC
+from sen12_dataset import Sen12_TS
 from torch.utils.data import DataLoader
 import random
 import argparse
@@ -68,6 +69,7 @@ if __name__ == "__main__":
     parser.add_argument("--load_gen", type=str, default='./Pretrain/CTGAN-Sen2_MTC/G_epoch97_PSNR21.259.pth', help="which checkpoint you want to use for generator")
     parser.add_argument("--predict_image_path", type=str, default='./image_out', help="name of the dataset_list")
     parser.add_argument("--root", type=str, default='../dataset/Sen2_MTC', help="Path to dataset")
+    parser.add_argument("--dataset", type=str, default='Sen2_MTC', help="Type of dataset used")
 
     """Parameters"""
     parser.add_argument("--image_size", type=int, default=256, help="image size")
@@ -85,8 +87,12 @@ if __name__ == "__main__":
     fixed_seed(random_seed_general)
     os.makedirs(os.path.join(opt.predict_image_path, opt.test_mode), exist_ok=True)
 
-    test_data = Sen2_MTC(opt, opt.test_mode)
-    test_loader = DataLoader(test_data, batch_size=opt.batch_size, shuffle=False, num_workers=opt.n_cpu, drop_last=False)
+    if opt.dataset == "SEN12MSCRTS":
+        test_data = Sen12_TS(opt, opt.test_mode)
+        print("Load SEN12MSCRTS dataset")
+    else:
+        test_data = Sen2_MTC(opt, opt.test_mode)
+    test_loader = DataLoader(test_data, batch_size=opt.batch_size, shuffle=True, num_workers=opt.n_cpu, drop_last=False)
 
     """define model & optimizer"""
     model_GEN = CTGAN_Generator(opt.image_size)
