@@ -22,7 +22,8 @@ def test_and_visualization(opt, model_GEN, test_loader, criterion):
     save_path = os.path.join(opt.predict_image_path, opt.test_mode)
     with torch.no_grad():
         for (real_A, real_B, image_names) in test_loader:
-            real_A[0], real_A[1], real_A[2], real_B = real_A[0].cuda(), real_A[1].cuda(), real_A[2].cuda(), real_B.cuda()
+            if not opt.gpu_id=="cpu":
+                real_A[0], real_A[1], real_A[2], real_B = real_A[0].cuda(), real_A[1].cuda(), real_A[2].cuda(), real_B.cuda()
             fake_B, cloud_mask, _ = model_GEN(real_A)
 
             loss = criterion(fake_B, real_B)
@@ -89,10 +90,16 @@ if __name__ == "__main__":
 
     """define model & optimizer"""
     model_GEN = CTGAN_Generator(opt.image_size)
-    model_GEN.load_state_dict(torch.load(opt.load_gen))
-    print('load transformer model successfully!')
-    model_GEN = model_GEN.cuda()
 
-    criterion = torch.nn.L1Loss().cuda()
+    if not opt.gpu_id=="cpu":
+        model_GEN.load_state_dict(torch.load(opt.load_gen))
+        print('load transformer model successfully!')
+        model_GEN = model_GEN.cuda()
+        criterion = torch.nn.L1Loss().cuda()
+    else:
+        device = torch.device('cpu')
+        model_GEN.load_state_dict(torch.load(opt.load_gen, map_location=device))
+        print('load transformer model on CPU successfully!')
+        criterion = torch.nn.L1Loss()
 
     test_and_visualization(opt = opt, model_GEN = model_GEN, test_loader = test_loader, criterion=criterion)
