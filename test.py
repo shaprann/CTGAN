@@ -48,16 +48,14 @@ def test_and_visualization(opt, model_GEN, test_loader, criterion):
                 psnr_list.append(psnr)
                 ssim_list.append(ssim)
 
+            psnr_array = np.array(psnr_list)
+            ssim_array = np.array(ssim_list)
+            psnr = np.mean(psnr_array)
+            ssim = np.mean(ssim_array)
+
             total_loss += loss.item()
             pbar.update()
-            pbar.set_postfix(
-                loss_val=f"{total_loss:.4f}"
-            )
-
-    psnr_list = np.array(psnr_list)
-    ssim_list = np.array(ssim_list)
-    psnr = np.mean(psnr_list)
-    ssim = np.mean(ssim_list)
+            pbar.set_postfix(loss_val=f"{total_loss:.4f}", psnr=f"{psnr:.3f}", ssim=f"{ssim:.3f}")
 
     pbar.set_postfix(loss_val=f"{total_loss:.4f}", psnr=f"{psnr:.3f}", ssim=f"{ssim:.3f}")
     pbar.close()
