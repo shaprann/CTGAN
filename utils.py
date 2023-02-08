@@ -1,14 +1,12 @@
 import numpy as np
 import random
 import os
-
 from PIL import Image
-import cv2
-
 import torch
 import torch.nn as nn
 
 from skimage.measure import compare_psnr, compare_ssim
+
 
 def fixed_seed(myseed):
     np.random.seed(myseed)
@@ -20,6 +18,7 @@ def fixed_seed(myseed):
         torch.cuda.manual_seed_all(myseed)
         torch.cuda.manual_seed(myseed)
 
+
 def set_requires_grad(nets, requires_grad=False):
     if not isinstance(nets, list):
         nets = [nets]
@@ -29,9 +28,12 @@ def set_requires_grad(nets, requires_grad=False):
                 param.requires_grad = requires_grad
 
 """
-Ref: https://github.com/Penn000/SpA-GAN_for_cloud_removal/blob/master/utils.py
-"""
+Removed this to release dependency on OpenCV
+
 def get_heatmap(img):
+    
+    # Ref: https://github.com/Penn000/SpA-GAN_for_cloud_removal/blob/master/utils.py
+    
     if len(img.shape) == 3:
         b, h, w = img.shape
         heat = np.zeros((b,3,h,w)).astype('uint8')
@@ -52,11 +54,11 @@ def save_heatmap(cloud_mask, save_path, image_name):
         mask = cv2.cvtColor(mask, cv2.COLOR_BGR2RGB)
 
         cv2.imwrite(os.path.join(save_path, image_name + f'_maskA{idx+1}.png'), mask)
+"""
 
-"""
-Ref: https://github.com/ameraner/dsen2-cr/blob/main/Code/tools/dataIO.py
-"""
 def get_rgb(image):
+    # Ref: https://github.com/ameraner/dsen2-cr/blob/main/Code/tools/dataIO.py
+
     image = image.mul(0.5).add_(0.5)
     image = image.squeeze()
     image = image.mul(10000).add_(0.5).clamp_(0, 10000)

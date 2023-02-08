@@ -8,12 +8,10 @@ import torch.nn as nn
 import random
 import argparse
 import torch
-import cv2
 import tqdm
-from tensorboardX import SummaryWriter
+from torch.utils.tensorboard import SummaryWriter
 from utils import *
 import os
-import cv2
 import warnings
 warnings.filterwarnings("ignore")
 
@@ -175,7 +173,7 @@ def valid(opt, model_GEN, val_loader, criterionL1, writer, epoch):
                 for idx, real_img in enumerate([input_1, input_2, input_3]):
                     save_image(real_img, save_path, image_name + f'_real_A{idx + 1}.png')
 
-                save_heatmap([cloud_mask[0][batch], cloud_mask[1][batch], cloud_mask[2][batch]], save_path, image_name)
+                # save_heatmap([cloud_mask[0][batch], cloud_mask[1][batch], cloud_mask[2][batch]], save_path, image_name)
 
                 output_rgb, label_rgb = get_rgb(output), get_rgb(label)
                 save_image(output_rgb, save_path, image_name + '_fake_B.png')

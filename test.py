@@ -38,7 +38,7 @@ def test_and_visualization(opt, model_GEN, test_loader, criterion):
                 for idx, real_img in enumerate([input_1, input_2, input_3]):
                     save_image(real_img, save_path, image_name + f'_real_A{idx + 1}.png')
 
-                save_heatmap([cloud_mask[0][image_num], cloud_mask[1][image_num], cloud_mask[2][image_num]], save_path, image_name)
+                # save_heatmap([cloud_mask[0][image_num], cloud_mask[1][image_num], cloud_mask[2][image_num]], save_path, image_name)
 
                 output_rgb, label_rgb = get_rgb(output), get_rgb(label)
                 save_image(output_rgb, save_path, image_name + '_fake_B.png')
