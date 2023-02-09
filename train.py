@@ -148,6 +148,7 @@ def train(opt, model_GEN, model_DIS, cloud_detection_model, optimizer_G, optimiz
 
     print('Best PSNR: %.3f | Best SSIM: %.3f' % (psnr_max, ssim_max))
 
+
 def valid(opt, model_GEN, val_loader, criterionL1, writer, epoch):
     model_GEN.eval()
 
@@ -183,11 +184,15 @@ def valid(opt, model_GEN, val_loader, criterionL1, writer, epoch):
                 psnr_list.append(psnr)
                 ssim_list.append(ssim)
 
+            psnr_array = np.array(psnr_list)
+            ssim_array = np.array(ssim_list)
+            psnr = np.mean(psnr_array)
+            ssim = np.mean(ssim_array)
+
             total_loss += loss.item()
             pbar.update()
-            pbar.set_postfix(
-                loss_val=f"{total_loss:.4f}"
-            )
+            pbar.set_postfix(loss_val=f"{total_loss:.4f}", psnr=f"{psnr:.3f}", ssim=f"{ssim:.3f}")
+
     psnr_list = np.array(psnr_list)
     ssim_list = np.array(ssim_list)
     psnr = np.mean(psnr_list)
@@ -199,7 +204,8 @@ def valid(opt, model_GEN, val_loader, criterionL1, writer, epoch):
 
     pbar.close()
     return psnr, ssim
-        
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     """Path"""
