@@ -25,7 +25,7 @@ cloud_maps_dir="/LOCAL2/shvl/datasets/cloud_removal/SEN12MSCRTS_cloud_maps"
 
 def train(opt, model_GEN, model_DIS, optimizer_G, optimizer_D, train_loader, val_loader, device, val_step, val_n_batches):
 
-    writer = SummaryWriter('runs/RUN_002_%s' % opt.dataset_name)
+    writer = SummaryWriter(f'runs/{opt.summary_prefix}_{opt.dataset_name}')
     
     # Define loss functions
     noise = opt.label_noise
@@ -226,6 +226,7 @@ if __name__ == "__main__":
     """Path"""
     parser.add_argument("--save_model_path", type=str, default='./checkpoints', help="Path to save model")                   #
     parser.add_argument("--dataset_name", type=str, default='CTGAN_Sen2_MTC', help="name of the dataset")                   #
+    parser.add_argument("--summary_prefix", type=str, default='RUN_999', help="Prefix for the tensorboard writer")
     # parser.add_argument("--predict_image_path", type=str, default='./image_out', help="Path to save predicted images")
     parser.add_argument("--load_gen", type=str, default='', help="path to the model of generator")
     parser.add_argument("--load_dis", type=str, default='', help="path to the model of discriminator")
