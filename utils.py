@@ -5,7 +5,7 @@ from PIL import Image
 import torch
 import torch.nn as nn
 
-from skimage.measure import compare_psnr, compare_ssim
+from skimage.metrics import peak_signal_noise_ratio, structural_similarity
 
 
 def fixed_seed(myseed):
@@ -93,8 +93,27 @@ def save_image(image, save_path, image_name):
     image.save(os.path.join(save_path, image_name))
 
 def psnr_ssim_cal(cloudfree, predict):
-    psnr = compare_psnr(cloudfree, predict)
-    ssim = compare_ssim(cloudfree, predict, multichannel = True, gaussian_weights = True, use_sample_covariance = False, sigma = 1.5)
+
+    if torch.is_tensor(cloudfree):
+        cloudfree = cloudfree.cpu().detach().numpy()
+
+    if torch.is_tensor(predict):
+        predict = predict.cpu().detach().numpy()
+
+    psnr = peak_signal_noise_ratio(
+        cloudfree,
+        predict,
+        data_range=1
+    )
+    ssim = structural_similarity(
+        cloudfree,
+        predict,
+        gaussian_weights=True,
+        use_sample_covariance=False,
+        sigma=1.5,
+        channel_axis=0,
+        data_range=1
+    )
     return psnr, ssim
 
 def PSNR_SSIM(cloudless, predict, save_path):
@@ -108,10 +127,11 @@ def PSNR_SSIM(cloudless, predict, save_path):
 Ref: https://github.com/ermongroup/STGAN/blob/master/models/networks.py
 """
 class GANLoss(nn.Module):
-    def __init__(self, gan_mode, target_real_label=1.0, target_fake_label=0.0):
+    def __init__(self, gan_mode, device, target_real_label=1.0, target_fake_label=0.0):
         super(GANLoss, self).__init__()
         self.register_buffer('real_label', torch.tensor(target_real_label))
         self.register_buffer('fake_label', torch.tensor(target_fake_label))
+        self.device = device
         self.gan_mode = gan_mode
         if gan_mode == 'lsgan':
             self.loss = nn.MSELoss()
@@ -125,14 +145,14 @@ class GANLoss(nn.Module):
             target_tensor = target_tensor.expand_as(prediction).clone()
             if noise:
                 real_label_noise = (torch.rand(prediction.shape[0], 1, 1, 1) - 0.5) * 6.0
-                real_label_noise = real_label_noise.cuda()
+                real_label_noise = real_label_noise.to(self.device)
                 target_tensor += real_label_noise
         else:
             target_tensor = self.fake_label
             target_tensor = target_tensor.expand_as(prediction).clone()
             if noise:
                 fake_label_noise = torch.rand(prediction.shape[0], 1, 1, 1) * 3.0
-                fake_label_noise = fake_label_noise.cuda()
+                fake_label_noise = fake_label_noise.to(self.device)
                 target_tensor += fake_label_noise
         return target_tensor
 
