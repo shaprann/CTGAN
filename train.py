@@ -149,16 +149,16 @@ def train(opt, model_GEN, model_DIS, optimizer_G, optimizer_D, train_loader, val
                 if psnr_max < psnr:
                     psnr_max = psnr
                     torch.save(model_GEN.state_dict(),
-                               os.path.join(opt.save_model_path, opt.opt.dataset_name, 'G_best_PSNR.pth'))
+                               os.path.join(opt.save_model_path, opt.dataset_name, 'G_best_PSNR.pth'))
                     torch.save(model_DIS.state_dict(),
-                               os.path.join(opt.save_model_path, opt.opt.dataset_name, 'D_best_PSNR.pth'))
+                               os.path.join(opt.save_model_path, opt.dataset_name, 'D_best_PSNR.pth'))
                     print('Save model!')
                 if ssim_max < ssim:
                     ssim_max = ssim
                     torch.save(model_GEN.state_dict(),
-                               os.path.join(opt.save_model_path, opt.opt.dataset_name, 'G_best_SSIM.pth'))
+                               os.path.join(opt.save_model_path, opt.dataset_name, 'G_best_SSIM.pth'))
                     torch.save(model_DIS.state_dict(),
-                               os.path.join(opt.save_model_path, opt.opt.dataset_name, 'D_best_SSIM.pth'))
+                               os.path.join(opt.save_model_path, opt.dataset_name, 'D_best_SSIM.pth'))
                     print('Save model!')
                 
         pbar.close()        
