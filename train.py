@@ -276,8 +276,8 @@ if __name__ == "__main__":
     )
     dataset_manager.load_dataset()
 
-    train_data = CTGANTorchIterableDataset(dataset_manager, device=device, mode="train")
-    val_data = CTGANTorchIterableDataset(dataset_manager, device=device, mode="val")
+    train_data = CTGANTorchIterableDataset(dataset_manager, mode="train")
+    val_data = CTGANTorchIterableDataset(dataset_manager, mode="val")
 
     train_loader = DataLoader(
         train_data,
