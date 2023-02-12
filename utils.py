@@ -103,7 +103,7 @@ def psnr_ssim_cal(cloudfree, predict):
     psnr = peak_signal_noise_ratio(
         cloudfree,
         predict,
-        data_range=1
+        data_range=2
     )
     ssim = structural_similarity(
         cloudfree,
@@ -112,7 +112,7 @@ def psnr_ssim_cal(cloudfree, predict):
         use_sample_covariance=False,
         sigma=1.5,
         channel_axis=0,
-        data_range=1
+        data_range=2
     )
     return psnr, ssim
 
