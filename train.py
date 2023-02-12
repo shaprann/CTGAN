@@ -129,6 +129,8 @@ def train(opt, model_GEN, model_DIS, optimizer_G, optimizer_D, train_loader, val
             writer.add_scalar('training_D_real', loss_D_real, train_step)
             writer.add_scalar('training_D_fake', loss_D_fake, train_step)
             writer.add_scalar('training_G_clouds', loss_g_clouds, train_step)
+            if opt.aux_loss:
+                writer.add_scalar('training_G_AUX_L1', loss_G_aux, train_step)
             writer.flush()
 
             pbar.update()
@@ -141,6 +143,13 @@ def train(opt, model_GEN, model_DIS, optimizer_G, optimizer_D, train_loader, val
                 D_clouds=f"{loss_g_clouds:.4f}"
             )
             train_step += 1
+
+            if train_step % 1000:
+                torch.save(model_GEN.state_dict(),
+                           os.path.join(opt.save_model_path, opt.dataset_name, f'{opt.summary_prefix}_G_step_{train_step}.pth'))
+                torch.save(model_DIS.state_dict(),
+                           os.path.join(opt.save_model_path, opt.dataset_name, f'{opt.summary_prefix}_D_step_{train_step}.pth'))
+                print('Save model!')
             
             if train_step % val_step == 0:
                 
@@ -149,16 +158,16 @@ def train(opt, model_GEN, model_DIS, optimizer_G, optimizer_D, train_loader, val
                 if psnr_max < psnr:
                     psnr_max = psnr
                     torch.save(model_GEN.state_dict(),
-                               os.path.join(opt.save_model_path, opt.dataset_name, 'G_best_PSNR.pth'))
+                               os.path.join(opt.save_model_path, opt.dataset_name, f'{opt.summary_prefix}_G_best_PSNR_{train_step}.pth'))
                     torch.save(model_DIS.state_dict(),
-                               os.path.join(opt.save_model_path, opt.dataset_name, 'D_best_PSNR.pth'))
+                               os.path.join(opt.save_model_path, opt.dataset_name, f'{opt.summary_prefix}_D_best_PSNR_{train_step}.pth'))
                     print('Save model!')
                 if ssim_max < ssim:
                     ssim_max = ssim
                     torch.save(model_GEN.state_dict(),
-                               os.path.join(opt.save_model_path, opt.dataset_name, 'G_best_SSIM.pth'))
+                               os.path.join(opt.save_model_path, opt.dataset_name, f'{opt.summary_prefix}_G_best_SSIM_{train_step}.pth'))
                     torch.save(model_DIS.state_dict(),
-                               os.path.join(opt.save_model_path, opt.dataset_name, 'D_best_SSIM.pth'))
+                               os.path.join(opt.save_model_path, opt.dataset_name, f'{opt.summary_prefix}_D_best_SSIM_{train_step}.pth'))
                     print('Save model!')
                 
         pbar.close()        
