@@ -144,7 +144,7 @@ def train(opt, model_GEN, model_DIS, optimizer_G, optimizer_D, train_loader, val
             )
             train_step += 1
 
-            if train_step % 1000:
+            if train_step % 1000 == 0:
                 torch.save(model_GEN.state_dict(),
                            os.path.join(opt.save_model_path, opt.dataset_name, f'{opt.summary_prefix}_G_step_{train_step}.pth'))
                 torch.save(model_DIS.state_dict(),
