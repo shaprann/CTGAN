@@ -107,3 +107,41 @@ class Feature_Extractor(nn.Module):
         pred = self.tanh(self.aux_conv(out))
 
         return cloud_mask2, out, pred
+
+
+class S1_Feature_Extractor(nn.Module):
+    def __init__(self):
+        super(S1_Feature_Extractor, self).__init__()
+        dim = 32
+        self.conv_in = nn.Sequential(
+            nn.Conv2d(4, dim, kernel_size=3, stride=1, padding=1, bias=False),
+            nn.BatchNorm2d(dim),
+            nn.ReLU(True)
+        )
+        self.ReLU = nn.ReLU(True)
+        self.tanh = nn.Tanh()
+
+        self.bottle1 = Bottleneck(dim)
+        self.bottle2 = Bottleneck(dim)
+        self.bottle3 = Bottleneck(dim)
+        self.bottle4 = Bottleneck(dim)
+        self.bottle5 = Bottleneck(dim)
+        self.bottle6 = Bottleneck(dim)
+        self.ASPP = ASPP(in_channels=dim, hidden_channel=128, atrous_rates=[12, 24, 36])
+        self.aux_conv = nn.Conv2d(dim, 4, kernel_size=3, stride=1, padding=1)
+
+    def forward(self, x):
+        out = self.conv_in(x)
+        out = self.ReLU(self.bottle1(out) + out)
+
+        out = self.ReLU(self.bottle2(out) + out)
+        out = self.ReLU(self.bottle3(out) + out)
+
+        out = self.ReLU(self.bottle4(out) + out)
+        out = self.ReLU(self.bottle5(out) + out)
+
+        out = self.ReLU(self.bottle6(out) + out)
+        out = self.ASPP(out)
+        pred = self.tanh(self.aux_conv(out))
+
+        return out, pred

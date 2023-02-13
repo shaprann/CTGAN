@@ -2,7 +2,7 @@ import torch.nn as nn
 import torch
 import math
 from model.model_component import *
-from model.FE import Feature_Extractor
+from model.FE import Feature_Extractor, S1_Feature_Extractor
 
 class Conformer_Module(nn.Module):
     def __init__(self, dim):
@@ -76,6 +76,87 @@ class CTGAN_Generator(nn.Module):
         out = self.model_final(output)
 
         return out, [att0, att1, att2], [pred_0, pred_1, pred_2]
+
+
+class S1CTGAN_Generator(nn.Module):
+
+    def __init__(self, image_size):
+        ngf = 32
+        super(S1CTGAN_Generator, self).__init__()
+        self.feature_extractor = Feature_Extractor()
+        self.s1_feature_extractor = S1_Feature_Extractor()
+        self.downsampling = nn.Sequential(
+            nn.Conv2d(2 * ngf, 4 * ngf, kernel_size=3, stride=2, padding=1, bias=False, ),
+            nn.BatchNorm2d(4 * ngf),
+            nn.ReLU(True),
+            nn.Conv2d(4 * ngf, 8 * ngf, kernel_size=3, stride=2, padding=1, bias=False),
+            nn.BatchNorm2d(8 * ngf),
+            nn.ReLU(True),
+        )
+
+        self.transformer = Conformer_Module(image_size // 4)
+        self.model_final = nn.Sequential(
+            nn.ConvTranspose2d(24 * ngf, 12 * ngf, kernel_size=3, stride=2, padding=1, output_padding=1, bias=False),
+            nn.BatchNorm2d(12 * ngf),
+            nn.ReLU(True),
+            nn.ConvTranspose2d(12 * ngf, 6 * ngf, kernel_size=3, stride=2, padding=1, output_padding=1, bias=False),
+            nn.BatchNorm2d(6 * ngf),
+            nn.ReLU(True),
+            nn.ReflectionPad2d(3),
+            nn.Conv2d(6 * ngf, 4, kernel_size=7, padding=0),
+            nn.Tanh()
+        )
+
+    def load_feature_extractor(self, filepath):
+
+        fe_state_dict = self.feature_extractor.state_dict()
+        pretrained_state_dict = torch.load(
+            filepath,
+            map_location=next(self.feature_extractor.parameters()).device
+        )
+        pretrained_fe_state_dict = {
+            key.replace("feature_extractor.", ""): value
+            for key, value
+            in pretrained_state_dict.items()
+            if key.replace("feature_extractor.", "") in fe_state_dict
+        }
+
+        if not pretrained_fe_state_dict.keys() == fe_state_dict.keys():
+            raise ValueError("Could not load weights for feature extractor")
+
+        self.feature_extractor.load_state_dict(pretrained_fe_state_dict)
+
+    def forward(self, input_s2, input_s1, s1_now):
+
+        x0, x1, x2 = input_s2
+        s1_0, s1_1, s1_2 = input_s1
+        s1_now = s1_now
+
+        att0, out0, pred_0 = self.feature_extractor(x0)
+        att1, out1, pred_1 = self.feature_extractor(x1)
+        att2, out2, pred_2 = self.feature_extractor(x2)
+
+        out0_s1, pred_0_s1 = self.s1_feature_extractor(s1_0)
+        out1_s1, pred_1_s1 = self.s1_feature_extractor(s1_1)
+        out2_s1, pred_2_s1 = self.s1_feature_extractor(s1_2)
+
+        out_now_s1, pred_now_s1 = self.s1_feature_extractor(s1_now)
+
+        out0_1 = torch.cat((out0, out0_s1, out1, out1_s1), 1)
+        out0_2 = torch.cat((out0, out0_s1, out2, out2_s1), 1)
+        out1_2 = torch.cat((out1, out1_s1, out2, out2_s1), 1)
+
+        out0_1 = self.downsampling(out0_1)
+        out0_2 = self.downsampling(out0_2)
+        out1_2 = self.downsampling(out1_2)
+        out_now_s1 = self.downsampling(out_now_s1)
+
+        output = torch.cat((out0_1, out0_2, out1_2, out_now_s1), 1)
+        output = self.transformer(output.view(output.shape[0], output.shape[1], -1))
+        out = self.model_final(output)
+
+        return out, [att0, att1, att2], [pred_0, pred_1, pred_2], [pred_0_s1, pred_1_s1, pred_2_s1]
+
 
 class CTGAN_Discriminator(nn.Module):
     def __init__(self, input_nc= 3*4+4, ndf=64, n_layers=3):

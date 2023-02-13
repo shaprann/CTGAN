@@ -7,7 +7,7 @@ from torch.utils.data import DataLoader
 import numpy as np
 from torch.serialization import save
 from torch.optim.lr_scheduler import CosineAnnealingLR
-from model.CTGAN import CTGAN_Generator, CTGAN_Discriminator
+from model.CTGAN import S1CTGAN_Generator, CTGAN_Discriminator
 import torch.nn as nn
 import random
 import argparse
@@ -68,16 +68,20 @@ def train(opt, model_GEN, model_DIS, optimizer_G, optimizer_D, train_loader, val
         for batch in train_loader:  # real_A, real_B, _
 
             real_B = batch["target_image"].to(device, non_blocking=True, dtype=torch.float)
+            S1_now = batch["original_s2_image"].to(device, non_blocking=True, dtype=torch.float)
 
             real_A = batch["inputs"]
             real_A = [a.to(device, non_blocking=True, dtype=torch.float) for a in real_A]
             real_A_combined = torch.cat((real_A[0], real_A[1], real_A[2]), 1).to(device, non_blocking=True, dtype=torch.float)
+
+            input_S1 = batch["input_images_s1"]
+            input_S1 = [image.to(device, non_blocking=True, dtype=torch.float) for image in input_S1]
             
             M = batch["input_cloud_maps"]
             M = [cloud_map.to(device, non_blocking=True, dtype=torch.float) for cloud_map in M]
 
             """forward generator"""
-            fake_B, cloud_mask, aux_pred = model_GEN(real_A)
+            fake_B, cloud_mask, aux_pred, aux_pred_s1 = model_GEN(real_A, input_S1, S1_now)
 
             """update Discriminator"""
             set_requires_grad(model_DIS, True)
@@ -118,7 +122,8 @@ def train(opt, model_GEN, model_DIS, optimizer_G, optimizer_D, train_loader, val
 
             if opt.aux_loss:
                 loss_G_aux = (criterionL1(aux_pred[0], real_B) + criterionL1(aux_pred[1], real_B) + criterionL1(aux_pred[2], real_B)) * opt.lambda_aux
-                loss_G = loss_G_GAN + loss_G_L1 + loss_g_clouds + loss_G_aux
+                loss_G_aux_s1 = (criterionL1(aux_pred_s1[0], real_B) + criterionL1(aux_pred_s1[1], real_B) + criterionL1(aux_pred_s1[2], real_B)) * opt.lambda_aux
+                loss_G = loss_G_GAN + loss_G_L1 + loss_g_clouds + loss_G_aux + loss_G_aux_s1
             else:
                 loss_G = loss_G_GAN + loss_G_L1 + loss_g_clouds
             loss_G.backward()
@@ -131,6 +136,7 @@ def train(opt, model_GEN, model_DIS, optimizer_G, optimizer_D, train_loader, val
             writer.add_scalar('training_G_clouds', loss_g_clouds, train_step)
             if opt.aux_loss:
                 writer.add_scalar('training_G_AUX_L1', loss_G_aux, train_step)
+                writer.add_scalar('training_G_S1_AUX_L1', loss_G_aux_s1, train_step)
             writer.flush()
 
             pbar.update()
@@ -239,6 +245,7 @@ if __name__ == "__main__":
     # parser.add_argument("--predict_image_path", type=str, default='./image_out', help="Path to save predicted images")
     parser.add_argument("--load_gen", type=str, default='', help="path to the model of generator")
     parser.add_argument("--load_dis", type=str, default='', help="path to the model of discriminator")
+    parser.add_argument("--load_fe", type=str, default='', help="path to the model of feature extractor")
 
     """Parameters"""
     parser.add_argument("--n_epochs", type=int, default=100, help="Number of epochs")
@@ -265,7 +272,7 @@ if __name__ == "__main__":
     print(opt)
 
     os.environ["CUDA_VISIBLE_DEVICES"] = opt.gpu_id
-    device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu:0')
+    device = torch.device(f'cuda:{opt.gpu_id}' if torch.cuda.is_available() else 'cpu:0')
     
     os.makedirs(os.path.join(opt.save_model_path, opt.dataset_name), exist_ok=True)
     fixed_seed(opt.manual_seed)
@@ -299,15 +306,14 @@ if __name__ == "__main__":
     )
     
     print('Load CTGAN model')
-    GEN = CTGAN_Generator(image_size=opt.image_size)
+    GEN = S1CTGAN_Generator(image_size=opt.image_size)
     DIS = CTGAN_Discriminator()
     # print(GEN, DIS)
 
     # Use pretrained model
-    if opt.load_gen and opt.load_dis:
+    if opt.load_fe:
         print('loading pre-trained model')
-        GEN.load_state_dict(torch.load(opt.load_gen))
-        DIS.load_state_dict(torch.load(opt.load_dis))
+        GEN.load_feature_extractor(opt.load_fe)
     
     if opt.optimizer == 'AdamW':
         optimizer_G = torch.optim.AdamW(GEN.parameters(), lr=opt.lr, betas=(0.5, 0.999), weight_decay=5e-4)
