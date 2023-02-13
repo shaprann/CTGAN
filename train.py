@@ -152,9 +152,9 @@ def train(opt, model_GEN, model_DIS, optimizer_G, optimizer_D, train_loader, val
 
             if train_step % 1000 == 0:
                 torch.save(model_GEN.state_dict(),
-                           os.path.join(opt.save_model_path, opt.dataset_name, f'{opt.summary_prefix}_G_step_{train_step}.pth'))
+                           os.path.join(opt.save_model_path, opt.dataset_name, opt.summary_prefix, f'{opt.summary_prefix}_G_step_{train_step}.pth'))
                 torch.save(model_DIS.state_dict(),
-                           os.path.join(opt.save_model_path, opt.dataset_name, f'{opt.summary_prefix}_D_step_{train_step}.pth'))
+                           os.path.join(opt.save_model_path, opt.dataset_name, opt.summary_prefix, f'{opt.summary_prefix}_D_step_{train_step}.pth'))
                 print('Save model!')
             
             if train_step % val_step == 0:
@@ -164,16 +164,16 @@ def train(opt, model_GEN, model_DIS, optimizer_G, optimizer_D, train_loader, val
                 if psnr_max < psnr:
                     psnr_max = psnr
                     torch.save(model_GEN.state_dict(),
-                               os.path.join(opt.save_model_path, opt.dataset_name, f'{opt.summary_prefix}_G_best_PSNR_{train_step}.pth'))
+                               os.path.join(opt.save_model_path, opt.dataset_name, opt.summary_prefix, f'{opt.summary_prefix}_G_best_PSNR_{train_step}.pth'))
                     torch.save(model_DIS.state_dict(),
-                               os.path.join(opt.save_model_path, opt.dataset_name, f'{opt.summary_prefix}_D_best_PSNR_{train_step}.pth'))
+                               os.path.join(opt.save_model_path, opt.dataset_name, opt.summary_prefix, f'{opt.summary_prefix}_D_best_PSNR_{train_step}.pth'))
                     print('Save model!')
                 if ssim_max < ssim:
                     ssim_max = ssim
                     torch.save(model_GEN.state_dict(),
-                               os.path.join(opt.save_model_path, opt.dataset_name, f'{opt.summary_prefix}_G_best_SSIM_{train_step}.pth'))
+                               os.path.join(opt.save_model_path, opt.dataset_name, opt.summary_prefix, f'{opt.summary_prefix}_G_best_SSIM_{train_step}.pth'))
                     torch.save(model_DIS.state_dict(),
-                               os.path.join(opt.save_model_path, opt.dataset_name, f'{opt.summary_prefix}_D_best_SSIM_{train_step}.pth'))
+                               os.path.join(opt.save_model_path, opt.dataset_name, opt.summary_prefix, f'{opt.summary_prefix}_D_best_SSIM_{train_step}.pth'))
                     print('Save model!')
                 
         pbar.close()        
@@ -189,7 +189,9 @@ def valid(opt, model_GEN, val_loader, criterionL1, writer, train_step, val_n_bat
 
     psnr_list = []
     ssim_list = []
-    total_loss = 0
+    loss_list = []
+    aux_loss_list = []
+    aux_s1_loss_list = []
 
     pbar = tqdm.tqdm(total=val_n_batches, desc="Validating...")
 
@@ -198,16 +200,28 @@ def valid(opt, model_GEN, val_loader, criterionL1, writer, train_step, val_n_bat
         for n_batch, batch in enumerate(val_loader):
 
             real_B = batch["target_image"].to(device, non_blocking=True, dtype=torch.float)
+            S1_now = batch["original_s2_image"].to(device, non_blocking=True, dtype=torch.float)
 
             real_A = batch["inputs"]
             real_A = [a.to(device, non_blocking=True, dtype=torch.float) for a in real_A]
 
+            input_S1 = batch["input_images_s1"]
+            input_S1 = [image.to(device, non_blocking=True, dtype=torch.float) for image in input_S1]
+
             M = batch["input_cloud_maps"]
             M = [cloud_map.to(device, non_blocking=True, dtype=torch.float) for cloud_map in M]
 
-            fake_B, cloud_mask, _ = model_GEN(real_A)
+            fake_B, cloud_mask, aux_pred, aux_pred_s1 = model_GEN(real_A, input_S1, S1_now)
 
             loss = criterionL1(fake_B, real_B)
+            loss_G_aux = (criterionL1(aux_pred[0], real_B) + criterionL1(aux_pred[1], real_B) + criterionL1(aux_pred[2],
+                                                                                                            real_B)) * opt.lambda_aux
+            loss_G_aux_s1 = (criterionL1(aux_pred_s1[0], real_B) + criterionL1(aux_pred_s1[1], real_B) + criterionL1(
+                aux_pred_s1[2], real_B)) * opt.lambda_aux
+
+            loss_list.append(loss.cpu().detach().numpy())
+            aux_loss_list.append(loss_G_aux.cpu().detach().numpy())
+            aux_s1_loss_list.append(loss_G_aux_s1.cpu().detach().numpy())
 
             for image_num in range(opt.batch_size):
 
@@ -226,6 +240,9 @@ def valid(opt, model_GEN, val_loader, criterionL1, writer, train_step, val_n_bat
     psnr = np.mean(psnr_list)
     ssim = np.mean(ssim_list)
 
+    writer.add_scalar('validation_L1_loss', np.mean(loss_list), train_step)
+    writer.add_scalar('validation_L1_AUX_loss', np.mean(aux_loss_list), train_step)
+    writer.add_scalar('validation_L1_S1_AUX_loss', np.mean(aux_s1_loss_list), train_step)
     writer.add_scalar('validation_PSNR', psnr, train_step)
     writer.add_scalar('validation_SSIM', ssim, train_step)
     writer.flush()
@@ -241,16 +258,16 @@ if __name__ == "__main__":
     """Path"""
     parser.add_argument("--save_model_path", type=str, default='./checkpoints', help="Path to save model")                   #
     parser.add_argument("--dataset_name", type=str, default='CTGAN_Sen2_MTC', help="name of the dataset")                   #
-    parser.add_argument("--summary_prefix", type=str, default='RUN_999', help="Prefix for the tensorboard writer")
+    parser.add_argument("--summary_prefix", type=str, default='RUN_999', help="Prefix for the tensorboard writer")          #
     # parser.add_argument("--predict_image_path", type=str, default='./image_out', help="Path to save predicted images")
     parser.add_argument("--load_gen", type=str, default='', help="path to the model of generator")
     parser.add_argument("--load_dis", type=str, default='', help="path to the model of discriminator")
-    parser.add_argument("--load_fe", type=str, default='', help="path to the model of feature extractor")
+    parser.add_argument("--load_fe", type=str, default='', help="path to the model of feature extractor")                   #
 
     """Parameters"""
     parser.add_argument("--n_epochs", type=int, default=100, help="Number of epochs")
     parser.add_argument("--val_step", type=int, default=50, help="Validate after this number of batches")                #
-    parser.add_argument("--val_n_batches", type=int, default=64, help="How many batches to use for validation")
+    parser.add_argument("--val_n_batches", type=int, default=64, help="How many batches to use for validation")          #
     parser.add_argument("--gan_mode", type=str, default='lsgan', help="Which gan mode(lsgan/vanilla)")
     parser.add_argument("--optimizer", type=str, default='AdamW', help="optimizer you want to use(AdamW/SGD)")
     parser.add_argument("--lr", type=float, default=5e-4, help="learning rate")   
@@ -261,20 +278,20 @@ if __name__ == "__main__":
     parser.add_argument("--in_channel", type=int, default=4, help="the number of input channels")
     parser.add_argument("--out_channel", type=int, default=4, help="the number of output channels")
     parser.add_argument("--image_size", type=int, default=256, help="crop size")
-    parser.add_argument("--aux_loss", action='store_true', help="whether use auxiliary loss(1/0)")
-    parser.add_argument("--label_noise", action='store_true', help="whether to add noise on the label of gan training")
+    parser.add_argument("--aux_loss", action='store_true', help="whether use auxiliary loss(1/0)")                           #
+    parser.add_argument("--label_noise", action='store_true', help="whether to add noise on the label of gan training")      #
 
     """base_options"""
-    parser.add_argument("--gpu_id", type=str, default='0', help="gpu id")
+    parser.add_argument("--gpu_id", type=str, default='0', help="gpu id")                                                     #
     parser.add_argument("--manual_seed", type=int, default=2022, help="random_seed you want")
 
     opt = parser.parse_args()                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          
     print(opt)
 
-    os.environ["CUDA_VISIBLE_DEVICES"] = opt.gpu_id
+    # os.environ["CUDA_VISIBLE_DEVICES"] = opt.gpu_id
     device = torch.device(f'cuda:{opt.gpu_id}' if torch.cuda.is_available() else 'cpu:0')
     
-    os.makedirs(os.path.join(opt.save_model_path, opt.dataset_name), exist_ok=True)
+    os.makedirs(os.path.join(opt.save_model_path, opt.dataset_name, opt.summary_prefix), exist_ok=True)
     fixed_seed(opt.manual_seed)
 
     dataset_manager = Sen12mscrtsDatasetManager(
@@ -283,8 +300,11 @@ if __name__ == "__main__":
     )
     dataset_manager.load_dataset()
 
-    train_data = CTGANTorchIterableDataset(dataset_manager, mode="train")
-    val_data = CTGANTorchIterableDataset(dataset_manager, mode="val")
+    train_data = S1CTGANTorchDataset(dataset_manager, mode="train")
+    train_data = CTGANTorchIterableDataset(wrapped_dataset=train_data)
+
+    val_data = S1CTGANTorchDataset(dataset_manager, mode="val")
+    val_data = CTGANTorchIterableDataset(wrapped_dataset=val_data)
 
     train_loader = DataLoader(
         train_data,
