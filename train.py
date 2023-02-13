@@ -1,7 +1,7 @@
 import sys
 sys.path.insert(1, "/HOME1/users/students/shvl/projects/spatiotemporal")
 from sen12mscrts_manager import Sen12mscrtsDatasetManager
-from ctgan_dataset import CTGANTorchIterableDataset
+from ctgan_dataset import S1CTGANTorchDataset, CTGANTorchIterableDataset
 from torch.utils.data import DataLoader
 
 import numpy as np
