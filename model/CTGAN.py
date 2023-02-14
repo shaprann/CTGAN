@@ -86,7 +86,15 @@ class S1CTGAN_Generator(nn.Module):
         self.feature_extractor = Feature_Extractor()
         self.s1_feature_extractor = S1_Feature_Extractor()
         self.downsampling = nn.Sequential(
-            nn.Conv2d(2 * ngf, 4 * ngf, kernel_size=3, stride=2, padding=1, bias=False, ),
+            nn.Conv2d(4 * ngf, 4 * ngf, kernel_size=3, stride=2, padding=1, bias=False, ),
+            nn.BatchNorm2d(4 * ngf),
+            nn.ReLU(True),
+            nn.Conv2d(4 * ngf, 8 * ngf, kernel_size=3, stride=2, padding=1, bias=False),
+            nn.BatchNorm2d(8 * ngf),
+            nn.ReLU(True),
+        )
+        self.downsampling_now = nn.Sequential(
+            nn.Conv2d(1 * ngf, 4 * ngf, kernel_size=3, stride=2, padding=1, bias=False, ),
             nn.BatchNorm2d(4 * ngf),
             nn.ReLU(True),
             nn.Conv2d(4 * ngf, 8 * ngf, kernel_size=3, stride=2, padding=1, bias=False),
@@ -96,7 +104,7 @@ class S1CTGAN_Generator(nn.Module):
 
         self.transformer = Conformer_Module(image_size // 4)
         self.model_final = nn.Sequential(
-            nn.ConvTranspose2d(24 * ngf, 12 * ngf, kernel_size=3, stride=2, padding=1, output_padding=1, bias=False),
+            nn.ConvTranspose2d(32 * ngf, 12 * ngf, kernel_size=3, stride=2, padding=1, output_padding=1, bias=False),
             nn.BatchNorm2d(12 * ngf),
             nn.ReLU(True),
             nn.ConvTranspose2d(12 * ngf, 6 * ngf, kernel_size=3, stride=2, padding=1, output_padding=1, bias=False),
@@ -149,7 +157,7 @@ class S1CTGAN_Generator(nn.Module):
         out0_1 = self.downsampling(out0_1)
         out0_2 = self.downsampling(out0_2)
         out1_2 = self.downsampling(out1_2)
-        out_now_s1 = self.downsampling(out_now_s1)
+        out_now_s1 = self.downsampling_now(out_now_s1)
 
         output = torch.cat((out0_1, out0_2, out1_2, out_now_s1), 1)
         output = self.transformer(output.view(output.shape[0], output.shape[1], -1))

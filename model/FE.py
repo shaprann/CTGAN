@@ -114,7 +114,7 @@ class S1_Feature_Extractor(nn.Module):
         super(S1_Feature_Extractor, self).__init__()
         dim = 32
         self.conv_in = nn.Sequential(
-            nn.Conv2d(4, dim, kernel_size=3, stride=1, padding=1, bias=False),
+            nn.Conv2d(2, dim, kernel_size=3, stride=1, padding=1, bias=False),
             nn.BatchNorm2d(dim),
             nn.ReLU(True)
         )

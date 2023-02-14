@@ -68,7 +68,7 @@ def train(opt, model_GEN, model_DIS, optimizer_G, optimizer_D, train_loader, val
         for batch in train_loader:  # real_A, real_B, _
 
             real_B = batch["target_image"].to(device, non_blocking=True, dtype=torch.float)
-            S1_now = batch["original_s2_image"].to(device, non_blocking=True, dtype=torch.float)
+            S1_now = batch["target_s1_image"].to(device, non_blocking=True, dtype=torch.float)
 
             real_A = batch["inputs"]
             real_A = [a.to(device, non_blocking=True, dtype=torch.float) for a in real_A]
@@ -159,7 +159,7 @@ def train(opt, model_GEN, model_DIS, optimizer_G, optimizer_D, train_loader, val
             
             if train_step % val_step == 0:
                 
-                psnr, ssim, total_loss = valid(opt, model_GEN, val_loader, criterionL1, writer, train_step, val_n_batches)
+                psnr, ssim, _ = valid(opt, model_GEN, val_loader, criterionL1, writer, train_step, val_n_batches)
 
                 if psnr_max < psnr:
                     psnr_max = psnr
@@ -200,7 +200,7 @@ def valid(opt, model_GEN, val_loader, criterionL1, writer, train_step, val_n_bat
         for n_batch, batch in enumerate(val_loader):
 
             real_B = batch["target_image"].to(device, non_blocking=True, dtype=torch.float)
-            S1_now = batch["original_s2_image"].to(device, non_blocking=True, dtype=torch.float)
+            S1_now = batch["target_s1_image"].to(device, non_blocking=True, dtype=torch.float)
 
             real_A = batch["inputs"]
             real_A = [a.to(device, non_blocking=True, dtype=torch.float) for a in real_A]
@@ -250,10 +250,13 @@ def valid(opt, model_GEN, val_loader, criterionL1, writer, train_step, val_n_bat
     # pbar.set_postfix(loss_val=f"{total_loss:.4f}", psnr=f"{psnr:.3f}", ssim=f"{ssim:.3f}")
 
     pbar.close()
-    return psnr, ssim, total_loss
+    return psnr, ssim, np.mean(loss_list)
 
 
 if __name__ == "__main__":
+
+    print("Just checking that remote server got the latest version of the code")
+
     parser = argparse.ArgumentParser()
     """Path"""
     parser.add_argument("--save_model_path", type=str, default='./checkpoints', help="Path to save model")                   #
