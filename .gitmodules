@@ -1,0 +1,3 @@
+[submodule "spatiotemporal"]
+	path = spatiotemporal
+	url = https://github.com/shaprann/spatiotemporal/

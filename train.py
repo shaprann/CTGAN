@@ -1,7 +1,5 @@
-import sys
-sys.path.insert(1, "/HOME1/users/students/shvl/projects/spatiotemporal")
-from sen12mscrts_manager import Sen12mscrtsDatasetManager
-from ctgan_dataset import CTGANTorchIterableDataset
+from spatiotemporal.SEN12MSCRTS import DatasetManager
+from spatiotemporal.torch_datasets.ctgan import CtganIterableDataset
 from torch.utils.data import DataLoader
 
 import numpy as np
@@ -270,14 +268,14 @@ if __name__ == "__main__":
     os.makedirs(os.path.join(opt.save_model_path, opt.dataset_name), exist_ok=True)
     fixed_seed(opt.manual_seed)
 
-    dataset_manager = Sen12mscrtsDatasetManager(
+    dataset_manager = DatasetManager(
         root_dir=root_dir,
         cloud_maps_dir=cloud_maps_dir
     )
     dataset_manager.load_dataset()
 
-    train_data = CTGANTorchIterableDataset(dataset_manager, mode="train")
-    val_data = CTGANTorchIterableDataset(dataset_manager, mode="val")
+    train_data = CtganIterableDataset(dataset_manager, mode="train")
+    val_data = CtganIterableDataset(dataset_manager, mode="val")
 
     train_loader = DataLoader(
         train_data,
