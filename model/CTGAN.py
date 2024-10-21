@@ -78,6 +78,11 @@ class CTGAN_Generator(nn.Module):
         return out, [att0, att1, att2], [pred_0, pred_1, pred_2]
 
 class CTGAN_Discriminator(nn.Module):
+
+    # Removed padding from the layers, since it distorts results at the edges. Reduced kernel size to reduce the output
+
+    RECEPTIVE_FIELD_THRESHOLD = 0.8
+
     def __init__(self, input_nc= 3*4+4, ndf=64, n_layers=3):
         super(CTGAN_Discriminator, self).__init__()
         self.discriminator = nn.Sequential(
@@ -98,8 +103,24 @@ class CTGAN_Discriminator(nn.Module):
             nn.Conv2d(ndf * 8, 1, kernel_size=3, stride=1, padding=0)
         )
 
+        self.receptive_field_model = nn.Sequential(
+            nn.Conv2d(1, 1, kernel_size=3, stride=2, padding=0, bias=False),
+            nn.Conv2d(1, 1, kernel_size=3, stride=2, padding=0, bias=False),
+            nn.Conv2d(1, 1, kernel_size=3, stride=2, padding=0, bias=False),
+            nn.Conv2d(1, 1, kernel_size=3, stride=2, padding=0, bias=False),
+            nn.Conv2d(1, 1, kernel_size=3, stride=1, padding=0, bias=False),
+            nn.Conv2d(1, 1, kernel_size=3, stride=1, padding=0, bias=False)
+        )
+        for layer in self.receptive_field_model:
+            with torch.no_grad():
+                layer.weight[:] = 1.0 / layer.weight.nelement()
+
     def forward(self, input):
         return self.discriminator(input)
+
+    def get_receptive_field(self, mask_tensor):
+        with torch.no_grad():
+            return self.receptive_field_model(mask_tensor) > self.RECEPTIVE_FIELD_THRESHOLD
     
 
 if __name__ == '__main__':
