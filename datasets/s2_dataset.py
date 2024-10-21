@@ -6,6 +6,7 @@ import torch
 
 
 class CTGAN_S2_Dataset(BaseDataset):
+
     requirements = (
         ZeroPixelsS2.__name__,
         CategoricalCloudMaps.__name__,
@@ -20,8 +21,6 @@ class CTGAN_S2_Dataset(BaseDataset):
             dataset_manager,
             min_target_area=0.95,
             min_inputs_area=0.5,
-            split=None,
-            s1_resampled=None,
             clip_inputs=False
     ):
 
@@ -46,10 +45,6 @@ class CTGAN_S2_Dataset(BaseDataset):
         input_is_somewhat_cloudfree = (self.data.loc[:, ([-1, -2, -3], "CLOUDFREEAREA")] > self.min_inputs_area).any(
             axis=1)
         self.data = self.data[input_is_somewhat_cloudfree]
-
-        # get a subset of data
-        if split is not None or s1_resampled is not None:
-            self.data = self.manager.get_subset(self.data, split=split, s1_resampled=s1_resampled)
 
     def initialize_data(self):
         return self.manager.data[["S2", "S2CLOUDMAP", "CLOUDFREEAREA"]]
