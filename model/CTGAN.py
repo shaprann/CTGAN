@@ -81,21 +81,21 @@ class CTGAN_Discriminator(nn.Module):
     def __init__(self, input_nc= 3*4+4, ndf=64, n_layers=3):
         super(CTGAN_Discriminator, self).__init__()
         self.discriminator = nn.Sequential(
-            nn.Conv2d(input_nc, ndf, kernel_size=4, stride=2, padding=1),
+            nn.Conv2d(input_nc, ndf, kernel_size=3, stride=2, padding=0),
             nn.LeakyReLU(0.2, True),
-            nn.Conv2d(ndf, ndf, kernel_size=4, stride=2, padding=1, bias=False),
+            nn.Conv2d(ndf, ndf, kernel_size=3, stride=2, padding=0, bias=False),
             nn.BatchNorm2d(ndf),
-            nn.LeakyReLU(0.2, True),
-            nn.Conv2d(ndf, ndf * 2, kernel_size=4, stride=2, padding=1, bias=False),
+            nn.LeakyReLU(0.3, True),
+            nn.Conv2d(ndf, ndf * 2, kernel_size=3, stride=2, padding=0, bias=False),
             nn.BatchNorm2d(ndf * 2),
             nn.LeakyReLU(0.2, True),
-            nn.Conv2d(ndf * 2, ndf * 4, kernel_size=4, stride=2, padding=1, bias=False),
+            nn.Conv2d(ndf * 2, ndf * 4, kernel_size=3, stride=2, padding=0, bias=False),
             nn.BatchNorm2d(ndf * 4),
             nn.LeakyReLU(0.2, True),
-            nn.Conv2d(ndf * 4, ndf * 8, kernel_size=4, stride=2, padding=1, bias=False),
+            nn.Conv2d(ndf * 4, ndf * 8, kernel_size=3, stride=1, padding=0, bias=False),
             nn.BatchNorm2d(ndf * 8),
             nn.LeakyReLU(0.2, True),
-            nn.Conv2d(ndf * 8, 1, kernel_size=4, stride=1, padding=1)
+            nn.Conv2d(ndf * 8, 1, kernel_size=3, stride=1, padding=0)
         )
 
     def forward(self, input):
