@@ -1,8 +1,8 @@
 import torch.nn as nn
 import torch
 import math
-from model.model_component import *
-from model.FE import Feature_Extractor
+from .model_component import *
+from .FE import Feature_Extractor
 
 class Conformer_Module(nn.Module):
     def __init__(self, dim):

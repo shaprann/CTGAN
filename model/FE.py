@@ -1,6 +1,6 @@
 import torch.nn as nn
 import torch
-from model.model_component import *
+from .model_component import ASPPConv, ASPPPooling
 
 class Bottleneck(nn.Module):
     def __init__(self, dim):
