@@ -1,317 +1,477 @@
-from spatiotemporal.SEN12MSCRTS import DatasetManager
-from spatiotemporal.torch_datasets.ctgan import CtganIterableDataset
-from torch.utils.data import DataLoader
+from .spatiotemporal.SEN12MSCRTS import DatasetManager
+from .spatiotemporal.mods import ZeroPixelsS2, CategoricalCloudMaps, CloudfreeArea
+from .datasets.s2_dataset import CTGAN_S2_Dataset
+from .model.CTGAN import CTGAN_Generator, CTGAN_Discriminator
+from .utils import fixed_seed, set_requires_grad, LSGANLoss
 
-import numpy as np
-from torch.serialization import save
-from torch.optim.lr_scheduler import CosineAnnealingLR
-from model.CTGAN import CTGAN_Generator, CTGAN_Discriminator
-import torch.nn as nn
-import random
-import argparse
 import torch
-import tqdm
+import torch.nn as nn
+from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
-from utils import *
-import os
+from torch.optim.lr_scheduler import CosineAnnealingLR
+from torch.utils.data._utils.collate import default_collate
+
+from tqdm import tqdm
+from os.path import join
+from skimage.io import imsave
+import pandas as pd
+import numpy as np
 import warnings
+import argparse
+import os
+
 warnings.filterwarnings("ignore")
 
-root_dir='/LOCAL2/shvl/datasets/cloud_removal/SEN12MSCRTS'
-cloud_maps_dir="/LOCAL2/shvl/datasets/cloud_removal/SEN12MSCRTS_cloud_maps"
 
+class Trainer:
 
-def train(opt, model_GEN, model_DIS, optimizer_G, optimizer_D, train_loader, val_loader, device, val_step, val_n_batches):
+    DTYPE = torch.float32
 
-    writer = SummaryWriter(f'runs/{opt.summary_prefix}_{opt.dataset_name}')
-    
-    # Define loss functions
-    noise = opt.label_noise
-    criterionGAN = GANLoss(opt.gan_mode, device=device)
-    criterionL1 = torch.nn.L1Loss()
-    criterionMSE = nn.MSELoss()
+    def __init__(self, opt, dataset: CTGAN_S2_Dataset):
 
-    # Use GPU
-    criterionGAN = criterionGAN.to(device)
-    criterionL1 = criterionL1.to(device)
-    criterionMSE = criterionMSE.to(device)
-    model_GEN = model_GEN.to(device)
-    model_DIS = model_DIS.to(device)
+        self.opt = opt
+        self.experiment_name = opt.experiment_name
+        self.device = torch.device(f'cuda:{self.opt.gpu_id}')
+        fixed_seed(self.opt.manual_seed)
 
-    """lr_scheduler"""
-    scheduler_G = CosineAnnealingLR(optimizer_G, T_max=opt.n_epochs, eta_min=1e-6)
-    scheduler_D = CosineAnnealingLR(optimizer_D, T_max=opt.n_epochs, eta_min=1e-6)
-    
-    """training"""
-    train_step = 0
+        self.train_dataset = dataset.subset(split="train", inplace=False)
+        self.val_dataset = dataset.subset(split="val", inplace=False)
+        del dataset
 
-    psnr_max = 0.
-    ssim_max = 0.
+        self.train_loader = DataLoader(
+            self.train_dataset,
+            batch_size=self.opt.batch_size,
+            num_workers=self.opt.workers,
+            persistent_workers=False,
+            prefetch_factor=1,
+            pin_memory=True,
+            drop_last=True,
+            shuffle=True
+        )
+        self.val_loader = DataLoader(
+            self.val_dataset,
+            batch_size=self.opt.val_batch_size,
+            num_workers=1,
+            persistent_workers=False,
+            prefetch_factor=1,
+            pin_memory=True,
+            drop_last=True,
+            shuffle=True
+        )
+        self.val_generator = self.infinite(self.val_loader)  # get new batch using next(self.val_generator)
 
-    print('Start training!')
-    for epoch in range(opt.n_epochs):
-        model_GEN.train()
-        model_DIS.train()
+        self.GEN = CTGAN_Generator(image_size=self.opt.image_size).to(device=self.device, dtype=self.DTYPE)
+        self.DIS = CTGAN_Discriminator().to(device=self.device, dtype=self.DTYPE)
+        self.optim_GEN = torch.optim.AdamW(self.GEN.parameters(), lr=self.opt.lr, betas=(0.5, 0.999), weight_decay=5e-4)
+        self.optim_DIS = torch.optim.AdamW(self.DIS.parameters(), lr=self.opt.lr, betas=(0.5, 0.999), weight_decay=5e-4)
 
-        pbar = tqdm.tqdm(total=len(train_loader), desc="Training... ", unit=" step")
-        
-        lr = optimizer_G.param_groups[0]['lr']
-        print('\nlearning rate = %.7f' % lr)
+        self.noise = self.opt.label_noise
+        self.criterionGAN = LSGANLoss().to(dtype=self.DTYPE, device=self.device)
+        self.criterionL1 = torch.nn.L1Loss().to(dtype=self.DTYPE, device=self.device)
+        self.criterionMSE = nn.MSELoss().to(dtype=self.DTYPE, device=self.device)
 
-        L1_total = []
+        self.scheduler_GEN = CosineAnnealingLR(self.optim_GEN, T_max=opt.n_epochs, eta_min=1e-6)
+        self.scheduler_DIS = CosineAnnealingLR(self.optim_DIS, T_max=opt.n_epochs, eta_min=1e-6)
 
-        # initial validation
-        _, _, _ = valid(opt, model_GEN, val_loader, criterionL1, writer, train_step, val_n_batches)
+        self._init_folders()
+        self.image_batch = self._init_example_images()
+        self.writer = self._init_writer()
+        self._maybe_write_images_at_init()
 
-        for batch in train_loader:  # real_A, real_B, _
+        self.step = 0
+        self.psnr_max = 0.
+        self.ssim_max = 0.
+        self.save_now_with_postfix = None
 
-            real_B = batch["target_image"].to(device, non_blocking=True, dtype=torch.float)
+        if self.opt.load_checkpoint:
+            self.load_from_checkpoint()
 
-            real_A = batch["inputs"]
-            real_A = [a.to(device, non_blocking=True, dtype=torch.float) for a in real_A]
-            real_A_combined = torch.cat((real_A[0], real_A[1], real_A[2]), 1).to(device, non_blocking=True, dtype=torch.float)
-            
-            M = batch["input_cloud_maps"]
-            M = [cloud_map.to(device, non_blocking=True, dtype=torch.float) for cloud_map in M]
+    @staticmethod
+    def infinite(loader):
+        while True:
+            for batch in loader:
+                yield batch
 
-            """forward generator"""
-            fake_B, cloud_mask, aux_pred = model_GEN(real_A)
+    @staticmethod
+    def batched_tensor_to_image(tensor):
 
-            """update Discriminator"""
-            set_requires_grad(model_DIS, True)
-            optimizer_D.zero_grad()
+        def factor_int(n):
+            """Source: https://stackoverflow.com/a/57503963"""
+            a = int(np.floor(np.sqrt(n)))
+            b = int(np.ceil(n / float(a)))
+            return a, b
 
-            # Fake 
-            fake_AB = torch.cat((real_A_combined, fake_B), 1)
-            pred_fake = model_DIS(fake_AB.detach())
-            loss_D_fake = criterionGAN(pred_fake, False, noise)
+        grid_shape = factor_int(tensor.size(0))
 
-            # Real
-            real_AB = torch.cat((real_A_combined, real_B), 1)
-            pred_real = model_DIS(real_AB)
-            loss_D_real = criterionGAN(pred_real, True, noise)
+        if not grid_shape[0] * grid_shape[1] == tensor.size(0):
+            tensor = torch.cat([
+                tensor,
+                0.5 * torch.ones(
+                    grid_shape[0] * grid_shape[1] - tensor.size(0),
+                    *tensor.shape[1:],
+                    dtype=tensor.dtype,
+                    device=tensor.device
+                )
+            ])
+
+        tensor = tensor.moveaxis(1, -1)
+        tensor = tensor.unflatten(0, grid_shape)
+        tensor = tensor.moveaxis(0, 2)
+        tensor = tensor.flatten(0, 1)
+        tensor = tensor.flatten(1, 2)
+        return tensor.numpy()
+
+    def _init_folders(self):
+
+        self.path_to_logs = join(self.opt.path_to_logs, f'{self.experiment_name}_CTGAN')
+        os.makedirs(self.path_to_logs, exist_ok=True)
+
+        if self.opt.save_step is not None:
+            self.path_to_checkpoints = join(self.opt.path_to_checkpoints, f'{self.experiment_name}_CTGAN')
+            os.makedirs(self.path_to_checkpoints, exist_ok=True)
+
+        if self.opt.image_step is not None:
+            self.path_to_predictions = join(self.opt.path_to_predictions, f'{self.experiment_name}_CTGAN')
+            os.makedirs(self.path_to_predictions, exist_ok=True)
+
+    def _init_example_images(self):
+        all_indices = self.val_dataset.data.index
+        good_indices = all_indices[all_indices.droplevel(["patch", "timestep"]).isin(self.val_dataset.VEGETATION_TILES)]
+        image_indices = np.random.RandomState(42).choice(a=good_indices, size=36)
+        image_batch = default_collate([self.val_dataset[i] for i in image_indices])
+        return image_batch
+
+    def _init_writer(self):
+        writer = SummaryWriter(self.path_to_logs)
+        options_markdown = pd.DataFrame.from_dict(vars(self.opt), orient='index', columns=["Options"]).to_markdown()
+        writer.add_text("Options", options_markdown, global_step=0)
+        writer.add_text("Dataset Modifications", str(self.train_dataset.dataset_manager._modifications), global_step=0)
+        return writer
+
+    def _maybe_write_images_at_init(self):
+        if self.opt.image_step is not None:
+            print(f"Saving input and target images to {self.path_to_predictions}")
+            self.write_images(self.image_batch["S2_t0"], postfix="TARGET")
+            self.write_images(self.image_batch["S2_t-1"], postfix="INPUT_t-1")
+            self.write_images(self.image_batch["S2_t-2"], postfix="INPUT_t-2")
+            self.write_images(self.image_batch["S2_t-3"], postfix="INPUT_t-3")
+
+    def train(self):
+
+        for epoch in range(self.opt.n_epochs):
+
+            for batch in tqdm(self.train_loader, desc=f"Epoch {epoch} of {self.opt.n_epochs} - ", unit=" step"):
+
+                loss_values = self.make_step(batch)
+
+                self.write(loss_values)
+                self.maybe_validate()
+                self.maybe_save()
+                self.maybe_write_images()
+
+            self.scheduler_DIS.step()
+            self.scheduler_GEN.step()
+
+    def make_step(self, batch):
+
+        self.GEN.train()
+        self.DIS.train()
+        loss_values = {}
+
+        batch = {
+            name: tensor.to(device=self.device, dtype=self.DTYPE, non_blocking=True)
+            for name, tensor in batch.items()
+        }
+        inputs = [batch["S2_t-1"], batch["S2_t-2"], batch["S2_t-3"]]
+        cloud_masks = [batch["S2CLOUDMASK_t-1"], batch["S2CLOUDMASK_t-2"], batch["S2CLOUDMASK_t-3"]]
+        target = batch["S2_t0"]
+        with torch.no_grad():
+            discriminator_mask = self.DIS.get_receptive_field(batch["S2CLOUDMASK_t0"])
+
+        """Forward Pass Generator"""
+
+        prediction, cloud_mask_preds, aux_preds = self.GEN(inputs)
+
+        """Update Discriminator"""
+
+        set_requires_grad(self.DIS, True)
+        self.optim_DIS.zero_grad()
+
+        # Prediction
+        inputs_with_prediction = torch.cat([*inputs, prediction], 1)
+        inputs_with_prediction_DETACHED = inputs_with_prediction.detach()
+        DIS_score_for_prediction = self.DIS(inputs_with_prediction_DETACHED)
+        DIS_score_for_prediction = DIS_score_for_prediction[discriminator_mask]
+        loss_values["DIS/loss_for_prediction"] = self.criterionGAN(DIS_score_for_prediction, False, self.noise)
+
+        # Target
+        inputs_with_target = torch.cat([*inputs, target], 1)
+        DIS_score_for_target = self.DIS(inputs_with_target)
+        DIS_score_for_target = DIS_score_for_target[discriminator_mask]
+        loss_values["DIS/loss_for_target"] = self.criterionGAN(DIS_score_for_target, True, self.noise)
+
+        # Combine loss and calculate gradients
+        loss_values["DIS/LOSS"] = (loss_values["DIS/loss_for_prediction"] + loss_values["DIS/loss_for_target"]) * 0.5
+        loss_values["DIS/LOSS"].backward()
+        self.optim_DIS.step()
+
+        """Update Generator"""
+
+        self.optim_GEN.zero_grad()
+        set_requires_grad(self.DIS, False)
+
+        # First, G(A) should fake the discriminator
+        DIS_score_for_prediction_ = self.DIS(inputs_with_prediction)
+        loss_values["GEN/loss_against_dis"] = self.criterionGAN(DIS_score_for_prediction_, True, self.noise)
+
+        # Second, G(A) = B
+        loss_values["GEN/loss_L1"] = self.criterionL1(prediction, target) * self.opt.lambda_L1
+
+        """Calculate loss for cloud predictions"""
+
+        loss_values["GEN/loss_clouds"] = 0.0
+        for mask_true, mask_pred in zip(cloud_masks, cloud_mask_preds):
+            loss_values["GEN/loss_clouds"] += self.criterionMSE(mask_true, mask_pred)
+
+        """Calculate auxiliary loss"""
+
+        loss_values["GEN/loss_aux"] = 0.0
+        if self.opt.aux_loss:
+            for true_image, aux_prediction in zip(inputs, aux_preds):
+                loss_values["GEN/loss_aux"] += self.criterionL1(true_image, aux_prediction)
+            loss_values["GEN/loss_aux"] *= self.opt.lambda_aux
+
+        """Calculate final loss"""
+
+        loss_values["GEN/LOSS"] = (
+                  loss_values["GEN/loss_against_dis"]
+                + loss_values["GEN/loss_L1"]
+                + loss_values["GEN/loss_clouds"]
+                + loss_values["GEN/loss_aux"]
+        )
+
+        loss_values["GEN/LOSS"].backward()
+        self.optim_GEN.step()
+
+        self.step += 1
+
+        return {name: value.detach() for name, value in loss_values.items()}
+
+    def write(self, loss_values):
+        for name, value in loss_values.items():
+            self.writer.add_scalar(name, value, self.step)
+        self.writer.flush()
+
+    def maybe_save(self):
+
+        if self.opt.save_step is not None:
+
+            if self.step % self.opt.save_step == 0:
+                print(f"\n Savind model {self.experiment_name} at step {self.step}\n")
+                self.save(postfix=f"_step_{self.step}")
+            elif self.save_now_with_postfix is not None:
+                print(f"\n Savind model {self.experiment_name} at step {self.step} as {self.save_now_with_postfix}\n")
+                self.save(postfix=self.save_now_with_postfix)
+
+    def save(self, postfix):
+
+        filename = f"CTGAN_{postfix}.checkpoint"
+        target_filepath = join(self.path_to_checkpoints, filename)
+
+        torch.save(
+            {
+                'step': self.step,
+                'GEN': self.GEN.state_dict(),
+                'DIS': self.DIS.state_dict(),
+                'optim_GEN': self.optim_GEN.state_dict(),
+                'optim_DIS': self.optim_DIS.state_dict(),
+            },
+            target_filepath
+        )
+
+    def load_from_checkpoint(self):
+
+        checkpoint_filepath = self.opt.load_checkpoint
+
+        print(f"\nLoading checkpoint:  {checkpoint_filepath}\n")
+
+        checkpoint = torch.load(checkpoint_filepath, weights_only=True)
+        self.step = checkpoint["step"]
+        self.GEN.load_state_dict(checkpoint["GEN"])
+        self.DIS.load_state_dict(checkpoint["DIS"])
+        self.optim_GEN.load_state_dict(checkpoint["optim_GEN"])
+        self.optim_DIS.load_state_dict(checkpoint["optim_DIS"])
+
+    def maybe_validate(self):
+
+        if self.step % self.opt.val_step == 0:
+            batch = next(self.val_generator)
+            loss_values = self.evaluate(batch)
+            self.write(loss_values)
+
+    def evaluate(self, batch):
+
+        self.GEN.train()   # TODO: fix this!!! actually should be eval()
+        self.DIS.train()
+        loss_values = {}
+
+        with torch.no_grad():
+
+            batch = {
+                name: tensor.to(device=self.device, dtype=self.DTYPE, non_blocking=True)
+                for name, tensor in batch.items()
+            }
+            inputs = [batch["S2_t-1"], batch["S2_t-2"], batch["S2_t-3"]]
+            cloud_masks = [batch["S2CLOUDMASK_t-1"], batch["S2CLOUDMASK_t-2"], batch["S2CLOUDMASK_t-3"]]
+            target = batch["S2_t0"]
+            discriminator_mask = self.DIS.get_receptive_field(batch["S2CLOUDMASK_t0"])
+
+            """Evaluate Generator"""
+
+            prediction, cloud_mask_preds, aux_preds = self.GEN(inputs)
+            inputs_with_prediction = torch.cat([*inputs, prediction], 1)
+
+            # First, GEN should deceive the discriminator
+            DIS_score_for_prediction = self.DIS(inputs_with_prediction)
+            loss_values["GEN/loss_against_dis"] = self.criterionGAN(DIS_score_for_prediction, True, noise=False)
+
+            # Second, GEN should predict target image
+            loss_values["GEN/loss_L1"] = self.criterionL1(prediction, target) * self.opt.lambda_L1
+
+            """Evaluate cloud predictions"""
+
+            loss_values["GEN/loss_clouds"] = 0.0
+            for mask_true, mask_pred in zip(cloud_masks, cloud_mask_preds):
+                loss_values["GEN/loss_clouds"] += self.criterionMSE(mask_true, mask_pred)
+
+            """Evaluate auxiliary loss"""
+
+            loss_values["GEN/loss_aux"] = 0.0
+            if self.opt.aux_loss:
+                for true_image, aux_prediction in zip(inputs, aux_preds):
+                    loss_values["GEN/loss_aux"] += self.criterionL1(true_image, aux_prediction)
+                loss_values["GEN/loss_aux"] *= self.opt.lambda_aux
+
+            """Evaluate Discriminator"""
+
+            # First, DIS should detect that prediction is fake
+            loss_values["DIS/loss_for_prediction"] = self.criterionGAN(DIS_score_for_prediction, False, noise=False)
+
+            # Second, GEN should detect that target image is real
+            inputs_with_target = torch.cat([*inputs, target], 1)
+            DIS_score_for_target = self.DIS(inputs_with_target)
+            DIS_score_for_target = DIS_score_for_target[discriminator_mask]
+            loss_values["DIS/loss_for_target"] = self.criterionGAN(DIS_score_for_target, True, noise=False)
 
             # Combine loss and calculate gradients
-            loss_D = (loss_D_fake + loss_D_real) * 0.5
-            loss_D.backward()
-            optimizer_D.step()
+            loss_values["DIS/LOSS"] = (loss_values["DIS/loss_for_prediction"] + loss_values["DIS/loss_for_target"]) * 0.5
 
-            """update generator"""
-            optimizer_G.zero_grad()
-            set_requires_grad(model_DIS, False)
+            """Calculate final loss"""
 
-            # First, G(A) should fake the discriminator
-            fake_AB = torch.cat((real_A_combined, fake_B), 1)
-            pred_fake = model_DIS(fake_AB)
-            loss_G_GAN = criterionGAN(pred_fake, True, noise)
-
-            # Second, G(A) = B
-            loss_G_L1 = criterionL1(fake_B, real_B) * opt.lambda_L1
-            L1_total.append(loss_G_L1.item())
-
-            # combine loss and calculate gradients
-            loss_g_clouds = 0
-            for i in range(len(cloud_mask)):
-                loss_g_clouds += criterionMSE(cloud_mask[i][:, 0, :, :], M[i][:, 0, :, :])
-
-            if opt.aux_loss:
-                loss_G_aux = (criterionL1(aux_pred[0], real_B) + criterionL1(aux_pred[1], real_B) + criterionL1(aux_pred[2], real_B)) * opt.lambda_aux
-                loss_G = loss_G_GAN + loss_G_L1 + loss_g_clouds + loss_G_aux
-            else:
-                loss_G = loss_G_GAN + loss_G_L1 + loss_g_clouds
-            loss_G.backward()
-            optimizer_G.step()
-
-            writer.add_scalar('training_G_GAN', loss_G_GAN, train_step)
-            writer.add_scalar('training_G_L1', loss_G_L1, train_step)
-            writer.add_scalar('training_D_real', loss_D_real, train_step)
-            writer.add_scalar('training_D_fake', loss_D_fake, train_step)
-            writer.add_scalar('training_G_clouds', loss_g_clouds, train_step)
-            if opt.aux_loss:
-                writer.add_scalar('training_G_AUX_L1', loss_G_aux, train_step)
-            writer.flush()
-
-            pbar.update()
-            pbar.set_postfix(
-                G_GAN=f"{loss_G_GAN:.4f}",
-                G_L1 = f"{loss_G_L1:.4f}",
-                G_L1_total=f"{np.mean(L1_total):.4f}",
-                D_real=f"{loss_D_real:.4f}",
-                D_fake=f"{loss_D_fake:.4f}",
-                D_clouds=f"{loss_g_clouds:.4f}"
+            loss_values["GEN/LOSS"] = (
+                    loss_values["GEN/loss_against_dis"]
+                    + loss_values["GEN/loss_L1"]
+                    + loss_values["GEN/loss_clouds"]
+                    + loss_values["GEN/loss_aux"]
             )
-            train_step += 1
 
-            if train_step % 1000 == 0:
-                torch.save(model_GEN.state_dict(),
-                           os.path.join(opt.save_model_path, opt.dataset_name, f'{opt.summary_prefix}_G_step_{train_step}.pth'))
-                torch.save(model_DIS.state_dict(),
-                           os.path.join(opt.save_model_path, opt.dataset_name, f'{opt.summary_prefix}_D_step_{train_step}.pth'))
-                print('Save model!')
-            
-            if train_step % val_step == 0:
-                
-                psnr, ssim, total_loss = valid(opt, model_GEN, val_loader, criterionL1, writer, train_step, val_n_batches)
+            return {"VAL_" + name: value.detach() for name, value in loss_values.items()}
 
-                if psnr_max < psnr:
-                    psnr_max = psnr
-                    torch.save(model_GEN.state_dict(),
-                               os.path.join(opt.save_model_path, opt.dataset_name, f'{opt.summary_prefix}_G_best_PSNR_{train_step}.pth'))
-                    torch.save(model_DIS.state_dict(),
-                               os.path.join(opt.save_model_path, opt.dataset_name, f'{opt.summary_prefix}_D_best_PSNR_{train_step}.pth'))
-                    print('Save model!')
-                if ssim_max < ssim:
-                    ssim_max = ssim
-                    torch.save(model_GEN.state_dict(),
-                               os.path.join(opt.save_model_path, opt.dataset_name, f'{opt.summary_prefix}_G_best_SSIM_{train_step}.pth'))
-                    torch.save(model_DIS.state_dict(),
-                               os.path.join(opt.save_model_path, opt.dataset_name, f'{opt.summary_prefix}_D_best_SSIM_{train_step}.pth'))
-                    print('Save model!')
-                
-        pbar.close()        
-      
-        scheduler_D.step()
-        scheduler_G.step()
+    def maybe_write_images(self):
 
-    print('Best PSNR: %.3f | Best SSIM: %.3f' % (psnr_max, ssim_max))
+        if self.opt.image_step is not None:
 
+            if self.step % self.opt.image_step == 0:
 
-def valid(opt, model_GEN, val_loader, criterionL1, writer, train_step, val_n_batches):
-    model_GEN.eval()
+                for mode in ["train", "eval"]:
 
-    psnr_list = []
-    ssim_list = []
-    total_loss = 0
+                    predictions_dict = self.run_inference(self.image_batch, mode=mode)
+                    postfix = f"MODE_{mode.upper()}_prediction_step_{self.step}"
+                    self.write_images(predictions_dict["prediction"], postfix)
 
-    pbar = tqdm.tqdm(total=val_n_batches, desc="Validating...")
+    def write_images(self, batched_tensor, postfix):
 
-    with torch.no_grad():
+        batched_tensor = batched_tensor.cpu().detach()
+        image = self.batched_tensor_to_image(batched_tensor)
+        image = image[:, :, :3]
+        image = (image.clip(0.0, 1.0) * 255).astype(np.uint8)
+        image_name = f"{self.experiment_name}_{postfix}.png"
+        imsave(join(self.path_to_predictions, image_name), image)
 
-        for n_batch, batch in enumerate(val_loader):
+    def run_inference(self, batch, mode="eval"):
 
-            real_B = batch["target_image"].to(device, non_blocking=True, dtype=torch.float)
+        if mode == "eval":
+            self.GEN.eval()
+        else:
+            self.GEN.train()  # TODO: change this! This should be eval()
 
-            real_A = batch["inputs"]
-            real_A = [a.to(device, non_blocking=True, dtype=torch.float) for a in real_A]
+        with torch.no_grad():
 
-            M = batch["input_cloud_maps"]
-            M = [cloud_map.to(device, non_blocking=True, dtype=torch.float) for cloud_map in M]
+            inputs = [
+                batch["S2_t-1"].to(device=self.device, dtype=self.DTYPE, non_blocking=True),
+                batch["S2_t-2"].to(device=self.device, dtype=self.DTYPE, non_blocking=True),
+                batch["S2_t-3"].to(device=self.device, dtype=self.DTYPE, non_blocking=True)
+            ]
 
-            fake_B, cloud_mask, _ = model_GEN(real_A)
+            prediction, cloud_mask_preds, aux_preds = self.GEN(inputs)
 
-            loss = criterionL1(fake_B, real_B)
-
-            for image_num in range(opt.batch_size):
-
-                output, label = fake_B[image_num], real_B[image_num]
-                psnr, ssim = psnr_ssim_cal(label, output)
-                psnr_list.append(psnr)
-                ssim_list.append(ssim)
-
-            pbar.update(1)
-
-            if n_batch >= val_n_batches - 1:
-                break
-
-    psnr_list = np.array(psnr_list)
-    ssim_list = np.array(ssim_list)
-    psnr = np.mean(psnr_list)
-    ssim = np.mean(ssim_list)
-
-    writer.add_scalar('validation_PSNR', psnr, train_step)
-    writer.add_scalar('validation_SSIM', ssim, train_step)
-    writer.flush()
-
-    # pbar.set_postfix(loss_val=f"{total_loss:.4f}", psnr=f"{psnr:.3f}", ssim=f"{ssim:.3f}")
-
-    pbar.close()
-    return psnr, ssim, total_loss
+            return {
+                "prediction": prediction,
+                "CLOUDMASK_PRED_t-1": cloud_mask_preds[0],
+                "CLOUDMASK_PRED_t-2": cloud_mask_preds[1],
+                "CLOUDMASK_PRED_t-3": cloud_mask_preds[2],
+                "AUX_PRED_t-1": aux_preds[0],
+                "AUX_PRED_t-2": aux_preds[1],
+                "AUX_PRED_t-3": aux_preds[2],
+            }
 
 
 if __name__ == "__main__":
+
     parser = argparse.ArgumentParser()
+
     """Path"""
-    parser.add_argument("--save_model_path", type=str, default='./checkpoints', help="Path to save model")                   #
-    parser.add_argument("--dataset_name", type=str, default='CTGAN_Sen2_MTC', help="name of the dataset")                   #
-    parser.add_argument("--summary_prefix", type=str, default='RUN_999', help="Prefix for the tensorboard writer")
-    # parser.add_argument("--predict_image_path", type=str, default='./image_out', help="Path to save predicted images")
-    parser.add_argument("--load_gen", type=str, default='', help="path to the model of generator")
-    parser.add_argument("--load_dis", type=str, default='', help="path to the model of discriminator")
+    parser.add_argument("--path_to_logs", type=str, required=True, help="Path to save logs")                   #
+    parser.add_argument("--path_to_checkpoints", type=str, default="", help="Path to save logs")  #
+    parser.add_argument("--path_to_predictions", type=str, default="", help="Path to save logs")  #
+    parser.add_argument("--experiment_name", type=str, required=True, help="Prefix for the tensorboard writer")
+    parser.add_argument("--load_checkpoint", type=str, default='', help="path to the model")
 
     """Parameters"""
     parser.add_argument("--n_epochs", type=int, default=100, help="Number of epochs")
     parser.add_argument("--val_step", type=int, default=50, help="Validate after this number of batches")                #
-    parser.add_argument("--val_n_batches", type=int, default=64, help="How many batches to use for validation")
-    parser.add_argument("--gan_mode", type=str, default='lsgan', help="Which gan mode(lsgan/vanilla)")
-    parser.add_argument("--optimizer", type=str, default='AdamW', help="optimizer you want to use(AdamW/SGD)")
+    parser.add_argument("--save_step", type=int, default=None, help="Save after this number of batches")
+    parser.add_argument("--image_step", type=int, default=None, help="Save image after this number of batches")
     parser.add_argument("--lr", type=float, default=5e-4, help="learning rate")   
     parser.add_argument("--workers", type=int, default=0, help="number of cpu threads to use during batch generation")       #
-    parser.add_argument("--batch_size", type=int, default=2, help="size of the batches")                                     #
+    parser.add_argument("--batch_size", type=int, default=4, help="size of the batches")                                     #
+    parser.add_argument("--val_batch_size", type=int, default=16, help="size of the batches")  #
     parser.add_argument('--lambda_L1', type=float, default=100.0, help='weight for L1 loss')
     parser.add_argument('--lambda_aux', type=float, default=50.0, help='weight for aux loss')
-    parser.add_argument("--in_channel", type=int, default=4, help="the number of input channels")
-    parser.add_argument("--out_channel", type=int, default=4, help="the number of output channels")
     parser.add_argument("--image_size", type=int, default=256, help="crop size")
     parser.add_argument("--aux_loss", action='store_true', help="whether use auxiliary loss(1/0)")
     parser.add_argument("--label_noise", action='store_true', help="whether to add noise on the label of gan training")
 
     """base_options"""
-    parser.add_argument("--gpu_id", type=str, default='0', help="gpu id")
+    parser.add_argument("--gpu_id", type=int, default=0, help="gpu id")
     parser.add_argument("--manual_seed", type=int, default=2022, help="random_seed you want")
 
     opt = parser.parse_args()                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          
     print(opt)
 
-    os.environ["CUDA_VISIBLE_DEVICES"] = opt.gpu_id
-    device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu:0')
-    
-    os.makedirs(os.path.join(opt.save_model_path, opt.dataset_name), exist_ok=True)
-    fixed_seed(opt.manual_seed)
-
+    # Initialize dataset
+    root_dir = '/LOCAL2/shvl/datasets/cloud_removal/SEN12MSCRTS'
+    cloud_maps_dir = "/LOCAL2/shvl/datasets/cloud_removal/SEN12MSCRTS_cloud_maps"
     dataset_manager = DatasetManager(
         root_dir=root_dir,
         cloud_maps_dir=cloud_maps_dir
     )
-    dataset_manager.load_dataset()
+    dataset_manager.load_from_file()
+    ZeroPixelsS2(dataset_manager).apply_modification(verbose=True)
+    CategoricalCloudMaps(dataset_manager).apply_modification(verbose=True)
+    CloudfreeArea(dataset_manager).apply_modification(verbose=True)
 
-    train_data = CtganIterableDataset(dataset_manager, mode="train")
-    val_data = CtganIterableDataset(dataset_manager, mode="val")
+    dataset = CTGAN_S2_Dataset(dataset_manager).subset(s1_resampled=True, inplace=True)
 
-    train_loader = DataLoader(
-        train_data,
-        batch_size=opt.batch_size,
-        collate_fn=train_data.collate_fn,
-        num_workers=opt.workers,
-        prefetch_factor=1,
-        pin_memory=True,
-        drop_last=True
-    )
-    val_loader = DataLoader(
-        val_data,
-        batch_size=opt.batch_size,
-        collate_fn=val_data.collate_fn,
-        num_workers=opt.workers,
-        prefetch_factor=1,
-        pin_memory=True,
-        drop_last=True
-    )
-    
-    print('Load CTGAN model')
-    GEN = CTGAN_Generator(image_size=opt.image_size)
-    DIS = CTGAN_Discriminator()
-    # print(GEN, DIS)
-
-    # Use pretrained model
-    if opt.load_gen and opt.load_dis:
-        print('loading pre-trained model')
-        GEN.load_state_dict(torch.load(opt.load_gen))
-        DIS.load_state_dict(torch.load(opt.load_dis))
-    
-    if opt.optimizer == 'AdamW':
-        optimizer_G = torch.optim.AdamW(GEN.parameters(), lr=opt.lr, betas=(0.5, 0.999), weight_decay=5e-4)
-        optimizer_D = torch.optim.AdamW(DIS.parameters(), lr=opt.lr, betas=(0.5, 0.999), weight_decay=5e-4)
-    if opt.optimizer == 'SGD':
-        optimizer_G = torch.optim.SGD(GEN.parameters(), lr=opt.lr, momentum=0.9, nesterov=True)
-        optimizer_D = torch.optim.SGD(DIS.parameters(), lr=opt.lr, momentum=0.9, nesterov=True)
-    
-    train(opt, GEN, DIS, optimizer_G, optimizer_D, train_loader, val_loader, device, opt.val_step, opt.val_n_batches)
+    trainer = Trainer(opt=opt, dataset=dataset)
+    trainer.train()
