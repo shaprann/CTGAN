@@ -6,17 +6,17 @@ from .FE import Feature_Extractor
 
 class Conformer_Module(nn.Module):
     def __init__(self, dim):
-        super(Conformer_Module,self).__init__()
-        self.comformer = ConformerBlock(
-        dim = dim ** 2,
-        dim_head = 1024,
-        heads = 16,
-        ff_mult = 4,
-        conv_expansion_factor = 2,
-        conv_kernel_size = 31,
-        attn_dropout = 0.1,
-        ff_dropout = 0.1,
-        conv_dropout = 0.1
+        super(Conformer_Module, self).__init__()
+        self.conformer = ConformerBlock(
+            dim = dim ** 2,
+            dim_head = 1024,
+            heads = 16,
+            ff_mult = 4,
+            conv_expansion_factor = 2,
+            conv_kernel_size = 31,
+            attn_dropout = 0.1,
+            ff_dropout = 0.1,
+            conv_dropout = 0.1
         )
 
     def forward(self, emb):
@@ -25,7 +25,7 @@ class Conformer_Module(nn.Module):
         # out: (length, batch size, d_model)
         out = emb.permute(1, 0, 2)
         # The encoder layer expect features in the shape of (length, batch size, d_model).
-        out = self.comformer(out)
+        out = self.conformer(out)
         # out: (batch size, length, d_model)
         out = out.transpose(0, 1)
         dim = int(math.sqrt(out.shape[2]))
@@ -62,7 +62,7 @@ class CTGAN_Generator(nn.Module):
         
     def forward(self, input):
         x0, x1, x2 = input[0], input[1], input[2]
-        att0, out0, pred_0 = self.feature_extractor(x0)
+        att0, out0, pred_0 = self.feature_extractor(x0)  # Feature extractor works fine
         att1, out1, pred_1 = self.feature_extractor(x1)
         att2, out2, pred_2 = self.feature_extractor(x2)
         out0_1 = torch.cat((out0, out1), 1)

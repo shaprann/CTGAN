@@ -15,6 +15,12 @@ class CTGAN_S2_Dataset(BaseDataset):
     DTYPE = torch.float32
     NP_DTYPE = np.float32
 
+    # This is only used to get well-looking images
+    VEGETATION_TILES = (
+        ("ROIs2017", 117),
+        ("ROIs1868", 17)
+    )
+
     def __init__(
             self,
             dataset_manager,
