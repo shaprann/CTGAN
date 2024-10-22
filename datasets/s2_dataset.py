@@ -1,6 +1,5 @@
-from .. import spatiotemporal
-from spatiotemporal.torch_datasets.base_dataset import BaseDataset
-from spatiotemporal.mods import ZeroPixelsS2, CategoricalCloudMaps, CloudfreeArea
+from ..spatiotemporal.torch_datasets.base_dataset import BaseDataset
+from ..spatiotemporal.mods import ZeroPixelsS2, CategoricalCloudMaps, CloudfreeArea
 import numpy as np
 import torch
 
@@ -25,14 +24,25 @@ class CTGAN_S2_Dataset(BaseDataset):
     ):
 
         super().__init__(dataset_manager)
+
         self.min_target_area = min_target_area
         self.min_inputs_area = min_inputs_area
         self.cloud_probability_threshold = self.dataset_manager.cloud_probability_threshold
         self.clip_inputs = clip_inputs
 
+        self.build_dataset()
+        self.filter_data()
+
+    def initialize_data(self):
+
+        return self.manager.data[["S2", "S2CLOUDMAP", "CLOUDFREEAREA"]]
+
+    def build_dataset(self):
+
         combined_dataset = self + self.shift(-1) + self.shift(-2) + self.shift(-3)
         self.data = combined_dataset.data
-        del combined_dataset
+
+    def filter_data(self):
 
         # remove NaN rows after applying shifts
         self.dropna()
@@ -42,12 +52,8 @@ class CTGAN_S2_Dataset(BaseDataset):
         self.data = self.data[target_is_cloudfree]
 
         # remove rows where even the least cloudy image is too cloudy
-        input_is_somewhat_cloudfree = (self.data.loc[:, ([-1, -2, -3], "CLOUDFREEAREA")] > self.min_inputs_area).any(
-            axis=1)
-        self.data = self.data[input_is_somewhat_cloudfree]
-
-    def initialize_data(self):
-        return self.manager.data[["S2", "S2CLOUDMAP", "CLOUDFREEAREA"]]
+        input_not_too_cloudy = (self.data.loc[:, ([-1, -2, -3], "CLOUDFREEAREA")] > self.min_inputs_area).any(axis=1)
+        self.data = self.data[input_not_too_cloudy]
 
     def __getitem__(self, idx):
 
@@ -64,6 +70,6 @@ class CTGAN_S2_Dataset(BaseDataset):
         for index, filepath in sample[:, "S2CLOUDMAP"].items():
             image = self.utils.read_tif_fast(filepath)
             image = (image < self.cloud_probability_threshold * 100).astype(self.NP_DTYPE)
-            result[f"S2CLOUDMAP_t{index}"] = image[np.newaxis, ...]
+            result[f"S2CLOUDMASK_t{index}"] = image[np.newaxis, ...]
 
         return result
