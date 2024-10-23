@@ -26,7 +26,9 @@ class CTGAN_S2_Dataset(BaseDataset):
             dataset_manager,
             min_target_area=0.95,
             min_inputs_area=0.5,
-            clip_inputs=False
+            rescale=True,
+            filter_bands=True,
+            clip_inputs=False,
     ):
 
         super().__init__(dataset_manager)
@@ -34,6 +36,8 @@ class CTGAN_S2_Dataset(BaseDataset):
         self.min_target_area = min_target_area
         self.min_inputs_area = min_inputs_area
         self.cloud_probability_threshold = self.dataset_manager.cloud_probability_threshold
+        self.rescale = rescale
+        self.filter_bands = filter_bands
         self.clip_inputs = clip_inputs
 
         self.build_dataset()
@@ -54,12 +58,14 @@ class CTGAN_S2_Dataset(BaseDataset):
         self.dropna()
 
         # remove target images that are too cloudy
-        target_is_cloudfree = self.data.loc[:, (0, "CLOUDFREEAREA")] > self.min_target_area
-        self.data = self.data[target_is_cloudfree]
+        if self.min_target_area is not None:
+            target_is_cloudfree = self.data.loc[:, (0, "CLOUDFREEAREA")] > self.min_target_area
+            self.data = self.data[target_is_cloudfree]
 
         # remove rows where even the least cloudy image is too cloudy
-        input_not_too_cloudy = (self.data.loc[:, ([-1, -2, -3], "CLOUDFREEAREA")] > self.min_inputs_area).any(axis=1)
-        self.data = self.data[input_not_too_cloudy]
+        if self.min_inputs_area is not None:
+            input_not_too_cloudy = (self.data.loc[:, ([-1, -2, -3], "CLOUDFREEAREA")] > self.min_inputs_area).any(axis=1)
+            self.data = self.data[input_not_too_cloudy]
 
     def __getitem__(self, idx):
 
@@ -69,8 +75,10 @@ class CTGAN_S2_Dataset(BaseDataset):
 
         for index, filepath in sample[:, "S2"].items():
             image = self.utils.read_tif_fast(filepath)
-            image = self.utils.rescale_s2(image, clip=self.clip_inputs)
-            image = image[self.BANDS]
+            if self.rescale:
+                image = self.utils.rescale_s2(image, clip=self.clip_inputs)
+            if self.filter_bands:
+                image = image[self.BANDS]
             result[f"S2_t{index}"] = image.astype(self.NP_DTYPE)
 
         for index, filepath in sample[:, "S2CLOUDMAP"].items():
