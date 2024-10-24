@@ -29,8 +29,10 @@ class CTGAN_S2_Dataset(BaseDataset):
             rescale=True,
             filter_bands=True,
             clip_inputs=False,
+            include_index=False,
+            include_cloudmaps=True
     ):
-
+        self.include_cloudmaps = include_cloudmaps
         super().__init__(dataset_manager)
 
         self.min_target_area = min_target_area
@@ -39,13 +41,17 @@ class CTGAN_S2_Dataset(BaseDataset):
         self.rescale = rescale
         self.filter_bands = filter_bands
         self.clip_inputs = clip_inputs
+        self.include_index = include_index
 
         self.build_dataset()
         self.filter_data()
 
     def initialize_data(self):
 
-        return self.manager.data[["S2", "S2CLOUDMAP", "CLOUDFREEAREA"]]
+        if self.include_cloudmaps:
+            return self.manager.data[["S2", "S2CLOUDMAP", "CLOUDFREEAREA"]]
+        else:
+            return self.manager.data[["S2", "CLOUDFREEAREA"]]
 
     def build_dataset(self):
 
@@ -81,9 +87,13 @@ class CTGAN_S2_Dataset(BaseDataset):
                 image = image[self.BANDS]
             result[f"S2_t{index}"] = image.astype(self.NP_DTYPE)
 
-        for index, filepath in sample[:, "S2CLOUDMAP"].items():
-            image = self.utils.read_tif_fast(filepath)
-            image = (image < self.cloud_probability_threshold * 100).astype(self.NP_DTYPE)
-            result[f"S2CLOUDMASK_t{index}"] = image[np.newaxis, ...]
+        if self.include_cloudmaps:
+            for index, filepath in sample[:, "S2CLOUDMAP"].items():
+                image = self.utils.read_tif_fast(filepath)
+                image = (image < self.cloud_probability_threshold * 100).astype(self.NP_DTYPE)
+                result[f"S2CLOUDMASK_t{index}"] = image[np.newaxis, ...]
+
+        if self.include_index:
+            result["index"] = idx
 
         return result
