@@ -30,7 +30,8 @@ class CTGAN_S2_Dataset(BaseDataset):
             filter_bands=True,
             clip_inputs=False,
             include_index=False,
-            include_cloudmaps=True
+            include_cloudmaps=True,
+            include_cloud_cover=False
     ):
         self.include_cloudmaps = include_cloudmaps
         super().__init__(dataset_manager)
@@ -42,6 +43,7 @@ class CTGAN_S2_Dataset(BaseDataset):
         self.filter_bands = filter_bands
         self.clip_inputs = clip_inputs
         self.include_index = include_index
+        self.include_cloud_cover = include_cloud_cover
 
         self.build_dataset()
         self.filter_data()
@@ -92,6 +94,10 @@ class CTGAN_S2_Dataset(BaseDataset):
                 image = self.utils.read_tif_fast(filepath)
                 image = (image < self.cloud_probability_threshold * 100).astype(self.NP_DTYPE)
                 result[f"S2CLOUDMASK_t{index}"] = image[np.newaxis, ...]
+
+        if self.include_cloud_cover:
+            for index, cloud_free_area in sample[:, "CLOUDFREEAREA"].items():
+                result[f"CLOUDFREEAREA_t{index}"] = cloud_free_area
 
         if self.include_index:
             result["index"] = idx
