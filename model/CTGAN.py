@@ -56,7 +56,7 @@ class CTGAN_Generator(nn.Module):
             nn.ReLU(True),
             nn.ReflectionPad2d(3),
             nn.Conv2d(6 * ngf, 4, kernel_size=7, padding=0),
-            nn.Sigmoid()
+            nn.Tanh()
         )
 
         

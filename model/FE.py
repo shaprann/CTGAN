@@ -76,7 +76,7 @@ class Feature_Extractor(nn.Module):
             nn.ReLU(True)
             )
         self.ReLU = nn.ReLU(True)
-        self.final_activation = nn.Sigmoid()  # nn.Tanh()
+        self.final_activation = nn.Tanh()
         
         self.cloud_detection = Cloud_Detection_Module(dim)
         self.bottle1 = Bottleneck(dim)
